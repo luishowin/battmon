@@ -67,7 +67,6 @@ pub struct Charts {
     power: gtk::DrawingArea,
     spark: gtk::DrawingArea,
     spark_note: gtk::Label,
-    group: adw::ToggleGroup,
     state: Rc<RefCell<ChartState>>,
 }
 
@@ -187,7 +186,6 @@ impl Charts {
             power,
             spark,
             spark_note,
-            group,
             state,
         }
     }
@@ -207,25 +205,6 @@ impl Charts {
 
         self.root.set_visible(!self.state.borrow().samples.is_empty());
         self.redraw();
-        self.qa_apply();
-    }
-
-    /// QA hook: drive the range toggle and park a hover position so the snapshot
-    /// harness can exercise both. Removed before release.
-    fn qa_apply(&self) {
-        if std::env::var("BATTMON_CHARTS_RANGE").as_deref() == Ok("week") {
-            self.group.set_active(1);
-        }
-        if let Ok(fraction) = std::env::var("BATTMON_CHARTS_HOVER")
-            && let Ok(fraction) = fraction.parse::<f64>()
-        {
-            let mut state = self.state.borrow_mut();
-            let end = state.now;
-            let start = end - state.range.seconds();
-            state.hover_ts = Some(start + ((end - start) as f64 * fraction.clamp(0.0, 1.0)) as i64);
-            drop(state);
-            self.redraw();
-        }
     }
 
     pub fn redraw(&self) {

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a9bf5"/>
+      <stop offset="1" stop-color="#1c71d8"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+
+  <!-- battery body -->
+  <rect x="62" y="74" width="116" height="112" rx="16" fill="none" stroke="#ffffff" stroke-width="12"/>
+  <!-- terminal -->
+  <rect x="178" y="106" width="16" height="48" rx="6" fill="#ffffff"/>
+
+  <!-- charge level -->
+  <rect x="80" y="92" width="80" height="76" rx="8" fill="#ffffff" opacity="0.28"/>
+
+  <!-- bolt -->
+  <path d="M126 96 L98 142 H120 L110 168 L144 120 H121 Z" fill="#ffffff"/>
+</svg>

@@ -100,3 +100,37 @@ APIs confirmed in the crate sources under `~/.cargo/registry/src`:
   (`4.04 Wh / 17.5 W ≈ 14 min`), so exact agreement there is not expected; the
   taper model is the point.
 - Gaps from suspend are kept as gaps in the charts, per spec.
+
+## M6: packaging, measurements, and two things worth remembering
+
+Installed with `scripts/install.sh`: binaries in `~/.local/bin`, desktop entry in
+`~/.local/share/applications`, icon in `~/.local/share/icons/hicolor/scalable/apps`,
+unit in `~/.config/systemd/user`, service enabled and running.
+`gtk-launch design.beben.Battmon` opens the window.
+
+| what | measured on this laptop |
+|---|---|
+| `battmon` binary | 714 KB (stripped, LTO, `opt-level = "z"`) |
+| `battmond` binary | 682 KB, no GTK in `ldd` |
+| `battmond` idle | **0.01 % CPU** (1 tick per 120 s), 4.8 MB RSS, one row per 60 s |
+| `battmon` idle, visible | 0.03 % CPU, **PSS 30 MB** (VmRSS 99 MB, 78 MB of it shared toolkit/GPU pages) |
+| stock GTK4 apps here | 110–138 MB VmRSS (calculator 138, text editor 118, clocks 111) |
+| one full sysfs read | ~0.15 ms; 10 `battmond --once` runs take 19 ms including process startup |
+
+Two traps found while measuring:
+
+1. **Seconds vs milliseconds in the sampler sleep.** `next_tick - now` is in
+   seconds; passing it to `from_millis` made the loop wake at ~100 Hz and cost
+   ~0.2 % CPU. `sleep_between()` now owns the conversion and has a regression
+   test (`sleep_between(1010, 1000) == 1 s`).
+2. **`AdwClamp` eases the page narrower than `maximum-size`.** Its threshold
+   must be *above* the maximum for a hard cap; with the default 400 px a 720 px
+   window got a ~610 px page, because `clamp_layout_allocate()` interpolates
+   from the threshold over a 960 px ramp. We use `maximum_size(720)` +
+   `tightening_threshold(1000)`, so the page is 720 px and fills anything
+   narrower.
+
+Also: `Widget::color()` (theme foreground) and
+`StyleManager::accent_color_rgba()` drive every chart colour, so dark/light and
+the accent follow the system without any hardcoded palette.
+

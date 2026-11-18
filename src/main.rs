@@ -12,15 +12,7 @@ fn main() -> glib::ExitCode {
 
     app.connect_startup(|_| ui::install_css());
     app.connect_activate(|app| {
-        let window = ui::window::build(app);
-
-        // Temporary QA hook: render the window to a file and exit.
-        if let Ok(path) = std::env::var("BATTMON_SNAPSHOT") {
-            glib::timeout_add_seconds_local(2, move || {
-                ui::snapshot(&window, &path);
-                std::process::exit(0)
-            });
-        }
+        ui::window::build(app);
     });
 
     app.run()

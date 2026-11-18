@@ -176,10 +176,17 @@ fn run_daemon(options: &Options) -> Result<()> {
     loop {
         let now = unix_now()?;
         if now >= next_tick {
-            let reading = battery.read(now, sysfs.ac_online());
-            if let Err(err) = sampler.tick(&store, &reading, options.persist) {
-                // A transient database error must not kill the sampler.
-                eprintln!("battmond: sample rejected: {err:#}");
+            let ac_online = sysfs.ac_online();
+            let status = battery.status();
+
+            // Cheap poll: only pay for the full attribute set when the row is
+            // due or the state changed.
+            if sampler.should_persist(status, ac_online, now, options.persist) {
+                let reading = battery.read(now, ac_online);
+                if let Err(err) = sampler.tick(&store, &reading, options.persist) {
+                    // A transient database error must not kill the sampler.
+                    eprintln!("battmond: sample rejected: {err:#}");
+                }
             }
             next_tick = now + options.tick as i64;
         }
@@ -188,9 +195,7 @@ fn run_daemon(options: &Options) -> Result<()> {
             break;
         }
 
-        let now = unix_now()?;
-        let wait_ms = (next_tick - now).clamp(0, 1_000) as u64;
-        std::thread::sleep(Duration::from_millis(wait_ms.max(1)));
+        std::thread::sleep(sleep_between(next_tick, unix_now()?));
     }
 
     // Final flush so stopping the service never loses the last few seconds.
@@ -211,6 +216,26 @@ struct Sampler {
 }
 
 impl Sampler {
+    /// Whether the next full read is worth doing: first sample, state change, or
+    /// the persist interval elapsed (including a backwards clock jump).
+    fn should_persist(
+        &self,
+        status: Status,
+        ac_online: Option<bool>,
+        now: i64,
+        persist_secs: i64,
+    ) -> bool {
+        match &self.last {
+            None => true,
+            Some(previous) => {
+                previous.status != status
+                    || previous.ac_online != ac_online
+                    || now - previous.ts >= persist_secs
+                    || now < previous.ts
+            }
+        }
+    }
+
     /// Persist when due, when the status/AC state flips, or on the very first
     /// tick. Does nothing when the reading lacks the Wh values the schema needs.
     fn tick(&mut self, store: &Store, reading: &Reading, persist_secs: i64) -> Result<bool> {
@@ -296,6 +321,19 @@ impl Sampler {
         self.health_day = Some(day);
         Ok(())
     }
+}
+
+/// How long to sleep before the next loop iteration.
+///
+/// Wakes at least once a second so a stop request is noticed promptly, but never
+/// sleeps past the next tick. `next_tick` and `now` are unix *seconds*; keeping
+/// the conversion in one place avoids treating them as milliseconds, which once
+/// made the sampler spin at 100 Hz.
+fn sleep_between(next_tick: i64, now: i64) -> Duration {
+    let remaining = Duration::from_secs(u64::try_from(next_tick - now).unwrap_or(0));
+    remaining
+        .min(Duration::from_secs(1))
+        .max(Duration::from_millis(1))
 }
 
 fn unix_now() -> Result<i64> {
@@ -425,6 +463,32 @@ mod tests {
         assert!(!sampler.tick(&store, &reading(1_010, 24.9, Status::Discharging, false), 60).unwrap());
         assert!(sampler.tick(&store, &reading(1_060, 24.7, Status::Discharging, false), 60).unwrap());
         assert_eq!(store.sample_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn sleep_between_clamps_to_one_second_not_one_millisecond() {
+        assert_eq!(sleep_between(1_010, 1_000), Duration::from_secs(1));
+        assert_eq!(sleep_between(1_060, 1_000), Duration::from_secs(1));
+        assert_eq!(sleep_between(1_000, 1_000), Duration::from_millis(1));
+        assert_eq!(sleep_between(900, 1_000), Duration::from_millis(1));
+    }
+
+    #[test]
+    fn cheap_poll_decides_when_to_read_everything() {
+        let store = Store::open_in_memory().unwrap();
+        let mut sampler = Sampler::default();
+
+        // Nothing persisted yet: the first tick always reads.
+        assert!(sampler.should_persist(Status::Discharging, Some(false), 1_000, 60));
+
+        sampler
+            .tick(&store, &reading(1_000, 25.0, Status::Discharging, false), 60)
+            .unwrap();
+
+        assert!(!sampler.should_persist(Status::Discharging, Some(false), 1_010, 60));
+        assert!(sampler.should_persist(Status::Discharging, Some(false), 1_060, 60));
+        assert!(sampler.should_persist(Status::Charging, Some(true), 1_010, 60));
+        assert!(sampler.should_persist(Status::Discharging, Some(false), 900, 60));
     }
 
     #[test]

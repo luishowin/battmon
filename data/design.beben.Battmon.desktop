@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Battery
+GenericName=Battery Monitor
+Comment=Battery level history, health, cycles and charge rate
+Exec=battmon
+Icon=design.beben.Battmon
+Terminal=false
+Type=Application
+Categories=System;Monitor;
+Keywords=battery;power;charge;health;cycles;
+StartupNotify=true
+StartupWMClass=design.beben.Battmon

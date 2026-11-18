@@ -51,13 +51,11 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
 
     let timers = Rc::new(RefCell::new(Timers::default()));
 
-    let (default_width, default_height) = qa_size().unwrap_or((720, 800));
-
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Battery")
-        .default_width(default_width)
-        .default_height(default_height)
+        .default_width(720)
+        .default_height(800)
         .content(&widgets.view)
         .build();
 
@@ -546,12 +544,6 @@ fn short_reason(message: &str) -> String {
     message.lines().next().unwrap_or(message).to_owned()
 }
 
-/// QA hook: let the snapshot harness render a narrow window.
-fn qa_size() -> Option<(i32, i32)> {
-    let size = std::env::var("BATTMON_SNAPSHOT_SIZE").ok()?;
-    let (width, height) = size.split_once('x')?;
-    Some((width.parse().ok()?, height.parse().ok()?))
-}
 
 #[cfg(test)]
 mod tests {

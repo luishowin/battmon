@@ -140,6 +140,18 @@ impl Battery {
         &self.dir
     }
 
+    /// Only the kernel `status` string.
+    ///
+    /// The daemon polls this every 10 s but reads the full attribute set only
+    /// when something changed or a sample is due: on this HP every sysfs read
+    /// goes through the embedded controller, so a dozen reads per tick cost
+    /// real CPU for no extra information.
+    pub fn status(&self) -> Status {
+        read_str(&self.dir, "status")
+            .map(|raw| Status::parse(&raw))
+            .unwrap_or_default()
+    }
+
     /// Read a normalised sample.
     ///
     /// Wh and W are derived with `voltage_min_design` when the firmware only
