@@ -1,0 +1,16 @@
+[package]
+name = "battmon"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Battery monitor for GNOME: level history, health, cycles and charge rate"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.104"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
