@@ -1,11 +1,12 @@
 //! Main window: hero block, stat cards, live refresh and empty states.
 
 use crate::ui::cards::{StatCard, stat_card};
+use crate::ui::chart::Charts;
 use adw::prelude::*;
 use battmon::estimate::{LiveEstimate, Tracker};
 use battmon::format;
 use battmon::model::{BatteryInfo, Reading, Status};
-use battmon::store::{Store, default_db_path};
+use battmon::store::{Sample, Store, default_db_path};
 use battmon::sysfs::Sysfs;
 use gtk::glib;
 use std::cell::RefCell;
@@ -18,6 +19,8 @@ const LIVE_SECS: u32 = 5;
 const HISTORY_SECS: u32 = 60;
 /// How much history is replayed into the estimator on startup.
 const SEED_WINDOW_SECS: i64 = 3_600;
+/// Loaded once a minute so both chart ranges switch without a query.
+const HISTORY_WINDOW_SECS: i64 = 8 * 86_400;
 
 const BANNER_NO_HISTORY: &str = "History is collected by the background service. \
                                   Run systemctl --user enable --now battmond.";
@@ -43,6 +46,7 @@ pub fn build(app: &adw::Application) -> adw::ApplicationWindow {
         widgets: widgets.clone(),
         last_reading: None,
         seeded: false,
+        median_discharge_w: None,
     }));
 
     let timers = Rc::new(RefCell::new(Timers::default()));
@@ -101,9 +105,7 @@ struct Widgets {
     cycles: StatCard,
     power: StatCard,
     extra: Option<StatCard>,
-    /// Kept for the chart milestone, which fills it in.
-    #[allow(dead_code)]
-    chart_area: gtk::Box,
+    charts: Charts,
     footer: gtk::Label,
     footer_base: String,
 }
@@ -169,9 +171,7 @@ impl Widgets {
             None
         };
 
-        // Filled in by the chart milestone.
-        let chart_area = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        chart_area.set_visible(false);
+        let charts = Charts::new();
 
         let footer = gtk::Label::new(Some(&subtitle));
         footer.add_css_class("caption");
@@ -187,7 +187,7 @@ impl Widgets {
         main_page.append(&banner);
         main_page.append(&hero);
         main_page.append(&cards);
-        main_page.append(&chart_area);
+        main_page.append(&charts.root);
         main_page.append(&footer);
 
         let status_page = adw::StatusPage::builder()
@@ -234,7 +234,7 @@ impl Widgets {
             cycles,
             power,
             extra,
-            chart_area,
+            charts,
             footer,
             footer_base: subtitle,
         }
@@ -249,6 +249,7 @@ struct State {
     widgets: Widgets,
     last_reading: Option<Reading>,
     seeded: bool,
+    median_discharge_w: Option<f64>,
 }
 
 impl State {
@@ -280,8 +281,33 @@ impl State {
         }
     }
 
-    fn estimated_cycles(&self, reading: &Reading) -> Option<(f64, Option<String>)> {
-        let store = self.store.as_ref()?;
+    /// "Typically 3 h 40 min at this level", from the median discharge draw over
+    /// the last week. Optional extra from spec §6.2.
+    fn paint_typical(&self, reading: &Reading) {
+        let runtime = if reading.status == Status::Discharging {
+            match (reading.energy_wh, self.median_discharge_w) {
+                (Some(energy), Some(median)) => {
+                    battmon::estimate::typical_runtime_secs(energy, median)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        match runtime {
+            Some(seconds) => {
+                self.widgets.typical.set_text(&format!(
+                    "Typically {} at this level",
+                    format::format_duration(seconds)
+                ));
+                self.widgets.typical.set_visible(true);
+            }
+            None => self.widgets.typical.set_visible(false),
+        }
+    }
+
+    fn estimated_cycles(&self, reading: &Reading) -> Option<(f64, Option<String>)> {        let store = self.store.as_ref()?;
         let cycles = battmon::estimate::estimate_cycles(
             store.cumulative_discharge_wh().ok()?,
             reading.design_wh?,
@@ -303,6 +329,7 @@ impl State {
             None => "n/a".to_owned(),
         });
         widgets.detail.set_text(&hero_text(reading, estimate));
+        self.paint_typical(reading);
 
         match reading.health_pct() {
             Some(health) => {
@@ -403,33 +430,56 @@ fn refresh_live(state: &Rc<RefCell<State>>) {
 }
 
 fn refresh_history(state: &Rc<RefCell<State>>) {
-    {
-        let mut state = state.borrow_mut();
-        if !state.ensure_store() {
-            return;
-        }
-
-        let empty = state
-            .store
-            .as_ref()
-            .and_then(|store| store.sample_count().ok())
-            .map(|count| count == 0)
-            .unwrap_or(true);
-
-        if empty {
-            state.widgets.banner.set_title(BANNER_NO_HISTORY);
-            state.widgets.banner.set_revealed(true);
-        } else {
-            state.widgets.banner.set_revealed(false);
-        }
+    let mut state = state.borrow_mut();
+    if !state.ensure_store() {
+        return;
     }
 
+    let now = format::now_secs();
+    let (samples, health) = match &state.store {
+        Some(store) => (
+            store
+                .samples_since(now - HISTORY_WINDOW_SECS)
+                .unwrap_or_default(),
+            store.daily_health().unwrap_or_default(),
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
+
+    if samples.is_empty() {
+        state.widgets.banner.set_title(BANNER_NO_HISTORY);
+        state.widgets.banner.set_revealed(true);
+    } else {
+        state.widgets.banner.set_revealed(false);
+    }
+
+    state.median_discharge_w = median_discharge_power(&samples, now);
+    state.widgets.charts.set_data(samples, health);
+
     // The cycle estimate depends on the store, so repaint once it is open.
-    let state = state.borrow();
     if let Some(reading) = state.last_reading.clone() {
         let estimate = state.tracker.estimate(&reading);
         state.paint(&reading, &estimate);
     }
+}
+
+/// Median draw of the last week's discharging samples, for the "typically"
+/// line. Robust against the spike from a compile or a video call.
+///
+/// Needs an hour of discharging samples before it is shown: a median of five
+/// readings is noise pretending to be a habit.
+fn median_discharge_power(samples: &[Sample], now: i64) -> Option<f64> {
+    let cutoff = now - 7 * 86_400;
+    let powers: Vec<f64> = samples
+        .iter()
+        .filter(|sample| sample.ts >= cutoff && sample.status == Status::Discharging)
+        .filter_map(|sample| sample.power_w)
+        .collect();
+
+    if powers.len() < 60 {
+        return None;
+    }
+    battmon::estimate::median_power_w(powers)
 }
 
 fn start_timers(state: &Rc<RefCell<State>>, timers: &Rc<RefCell<Timers>>) {

@@ -1,6 +1,7 @@
 //! GTK/libadwaita front end.
 
 pub mod cards;
+pub mod chart;
 pub mod window;
 
 /// Only layout is styled here; every colour comes from the Adwaita theme, so

@@ -57,6 +57,12 @@ pub fn local_day_month(ts: i64) -> Result<String> {
     Ok(format!("{} {}", date.day(), month_name(date.month())))
 }
 
+/// Seconds since local midnight, used to align axis ticks to the wall clock.
+pub fn local_seconds_of_day(ts: i64) -> Result<i64> {
+    let time = local(ts)?;
+    Ok(i64::from(time.hour()) * 3_600 + i64::from(time.minute()) * 60 + i64::from(time.second()))
+}
+
 fn month_name(month: i8) -> &'static str {
     MONTHS
         .get(usize::from(month.saturating_sub(1) as u8))
@@ -91,7 +97,10 @@ pub fn format_duration_fine(seconds: f64) -> String {
         return "under a minute".to_owned();
     }
 
-    let total_minutes = ((seconds / 60.0).round() as i64).max(1);
+    let total_minutes = (seconds / 60.0).round() as i64;
+    if total_minutes <= 0 {
+        return "under a minute".to_owned();
+    }
     let hours = total_minutes / 60;
     let minutes = total_minutes % 60;
 
@@ -109,7 +118,7 @@ mod tests {
     #[test]
     fn durations_round_to_five_minutes() {
         assert_eq!(format_duration(4.0 * 3_600.0 + 20.0 * 60.0), "4 h 20 min");
-        assert_eq!(format_duration(2_280.0), "35 min"); // 38 min rounds down
+        assert_eq!(format_duration(2_280.0), "40 min"); // 38 min rounds up
         assert_eq!(format_duration(3_600.0), "1 h");
         assert_eq!(format_duration(5_400.0), "1 h 30 min");
         assert_eq!(format_duration(60.0), "under 5 min");

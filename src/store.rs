@@ -72,6 +72,15 @@ pub struct Sample {
 }
 
 impl Sample {
+    /// Charge level in percent, clamped the same way [`Reading::level_pct`] does.
+    pub fn level_pct(&self) -> f64 {
+        if self.full_wh > 0.0 {
+            (self.energy_wh / self.full_wh * 100.0).clamp(0.0, 100.0)
+        } else {
+            0.0
+        }
+    }
+
     /// Rebuild a [`Reading`] so history can be replayed into the estimators.
     pub fn to_reading(&self) -> Reading {
         Reading {
