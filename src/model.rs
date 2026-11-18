@@ -144,7 +144,7 @@ impl Reading {
     /// Full-charge capacity as a percentage of design capacity.
     pub fn health_pct(&self) -> Option<f64> {
         match (self.full_wh, self.design_wh) {
-            (Some(full), Some(design)) if design > 0.0 => Some(full / design * 100.0),
+            (Some(full), Some(design)) => crate::estimate::health_pct(full, design),
             _ => None,
         }
     }
@@ -152,7 +152,7 @@ impl Reading {
     /// Charge or discharge rate as percent of a full battery per hour.
     pub fn rate_pct_per_h(&self) -> Option<f64> {
         match (self.power_w, self.full_wh) {
-            (Some(power), Some(full)) if full > 0.0 => Some(power / full * 100.0),
+            (Some(power), Some(full)) => crate::estimate::rate_pct_per_h(power, full),
             _ => None,
         }
     }
