@@ -5,6 +5,8 @@ edition = "2024"
 rust-version = "1.92"
 description = "Battery monitor for GNOME: level history, health, cycles and charge rate"
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/luishowin/battmon"
 
 [features]
 default = ["gui"]

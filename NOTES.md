@@ -8,7 +8,7 @@ from the spec's assumptions.
 
 `/sys/class/power_supply/`: `AC`, `BAT0`.
 
-`BAT0` — Hewlett-Packard "Primary", Li-ion, serial `02228 2021/01/27`:
+`BAT0` — Hewlett-Packard "Primary", Li-ion (serial redacted):
 
 | attribute | value | notes |
 |---|---|---|
