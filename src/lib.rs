@@ -4,6 +4,7 @@
 //! and can be built with `--no-default-features`.
 
 pub mod estimate;
+pub mod format;
 pub mod model;
 pub mod store;
 pub mod sysfs;

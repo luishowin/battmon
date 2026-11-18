@@ -3,9 +3,9 @@
 //! WAL mode so the GUI can read while the daemon writes. The daemon is the only
 //! writer; the GUI opens the same file read-only in practice.
 
-use crate::model::Reading;
+use crate::model::{Reading, Status};
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -58,6 +58,39 @@ impl DailyHealth {
     }
 }
 
+/// One raw sample as read back from the database.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sample {
+    pub ts: i64,
+    pub status: Status,
+    pub ac_online: bool,
+    pub energy_wh: f64,
+    pub full_wh: f64,
+    pub power_w: Option<f64>,
+    pub voltage_v: Option<f64>,
+    pub temp_c: Option<f64>,
+}
+
+impl Sample {
+    /// Rebuild a [`Reading`] so history can be replayed into the estimators.
+    pub fn to_reading(&self) -> Reading {
+        Reading {
+            ts: self.ts,
+            status: self.status,
+            ac_online: Some(self.ac_online),
+            energy_wh: Some(self.energy_wh),
+            full_wh: Some(self.full_wh),
+            design_wh: None,
+            power_w: self.power_w,
+            voltage_v: self.voltage_v,
+            cycle_count: None,
+            temp_c: self.temp_c.map(|temp| temp as f32),
+            charge_limit_pct: None,
+            capacity_pct: None,
+        }
+    }
+}
+
 /// Handle on the Battmon database.
 pub struct Store {
     conn: Connection,
@@ -89,6 +122,34 @@ impl Store {
     /// In-memory database for tests. WAL is not available there.
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
+    }
+
+    /// Open an existing database without the ability to write it, which is what
+    /// the GUI does. Fails with a readable message when the daemon has not
+    /// created it yet.
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("opening database {} read-only", path.display()))?;
+        conn.busy_timeout(Duration::from_secs(5))
+            .context("setting busy timeout")?;
+
+        let has_samples: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'samples')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_samples {
+            bail!("{} has no samples table yet", path.display());
+        }
+
+        let store = Self { conn };
+        let version = store.schema_version()?;
+        if version > SCHEMA_VERSION {
+            bail!("database schema {version} is newer than this build ({SCHEMA_VERSION})");
+        }
+        Ok(store)
     }
 
     fn init(conn: Connection) -> Result<Self> {
@@ -166,6 +227,34 @@ impl Store {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM samples", [], |row| row.get(0))?)
+    }
+
+    /// Raw samples at or after `since`, oldest first. Charts and the estimator
+    /// seed use this; gaps are preserved rather than filled.
+    pub fn samples_since(&self, since: i64) -> Result<Vec<Sample>> {
+        let mut statement = self.conn.prepare(
+            "SELECT ts, status, ac_online, energy_wh, full_wh, power_w, voltage_v, temp_c
+             FROM samples WHERE ts >= ?1 ORDER BY ts",
+        )?;
+
+        let rows = statement.query_map(params![since], |row| {
+            Ok(Sample {
+                ts: row.get(0)?,
+                status: Status::from_i64(row.get(1)?),
+                ac_online: row.get::<_, i64>(2)? != 0,
+                energy_wh: row.get(3)?,
+                full_wh: row.get(4)?,
+                power_w: row.get(5)?,
+                voltage_v: row.get(6)?,
+                temp_c: row.get(7)?,
+            })
+        })?;
+
+        let mut samples = Vec::new();
+        for row in rows {
+            samples.push(row?);
+        }
+        Ok(samples)
     }
 
     /// Delete raw samples older than `keep_days` before ` now`.
@@ -442,6 +531,61 @@ mod tests {
                 .insert_sample(&reading(100, 20.0, Status::Discharging))
                 .unwrap();
         }
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn samples_since_returns_rows_in_order() {
+        let store = Store::open_in_memory().unwrap();
+        for ts in [300, 100, 200] {
+            store
+                .insert_sample(&reading(ts, 20.0, Status::Discharging))
+                .unwrap();
+        }
+
+        let rows = store.samples_since(150).unwrap();
+        assert_eq!(
+            rows.iter().map(|sample| sample.ts).collect::<Vec<_>>(),
+            vec![200, 300]
+        );
+        assert_eq!(rows[0].to_reading().status, Status::Discharging);
+        assert_eq!(rows[0].to_reading().energy_wh, Some(20.0));
+    }
+
+    #[test]
+    fn read_only_store_cannot_write() {
+        let path = std::env::temp_dir().join(format!(
+            "battmon-test-ro-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        std::fs::write(&path, b"").unwrap();
+        assert!(
+            Store::open_read_only(&path).is_err(),
+            "a database without a schema must be refused"
+        );
+
+        {
+            let store = Store::open(&path).unwrap();
+            store
+                .insert_sample(&reading(100, 20.0, Status::Discharging))
+                .unwrap();
+        }
+
+        let store = Store::open_read_only(&path).unwrap();
+        assert_eq!(store.sample_count().unwrap(), 1);
+        assert!(
+            store
+                .insert_sample(&reading(200, 19.0, Status::Discharging))
+                .is_err()
+        );
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("db-wal"));

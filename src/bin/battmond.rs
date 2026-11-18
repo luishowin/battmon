@@ -274,7 +274,7 @@ impl Sampler {
 
     /// Write today's health row (and prune) once per local day.
     fn refresh_daily_health(&mut self, store: &Store, reading: &Reading) -> Result<()> {
-        let day = local_day(reading.ts)?;
+        let day = battmon::format::local_day(reading.ts)?;
         if self.health_day.as_deref() == Some(day.as_str()) {
             return Ok(());
         }
@@ -296,12 +296,6 @@ impl Sampler {
         self.health_day = Some(day);
         Ok(())
     }
-}
-
-fn local_day(ts: i64) -> Result<String> {
-    let timestamp = jiff::Timestamp::from_second(ts).context("timestamp out of range")?;
-    let zoned = timestamp.to_zoned_datetime(jiff::tz::TimeZone::system());
-    Ok(zoned.date().to_string())
 }
 
 fn unix_now() -> Result<i64> {
@@ -514,7 +508,7 @@ mod tests {
 
     #[test]
     fn local_day_is_iso_dated() {
-        let day = local_day(1_765_000_000).unwrap();
+        let day = battmon::format::local_day(1_765_000_000).unwrap();
         assert_eq!(day.len(), 10);
         assert_eq!(&day[4..5], "-");
         assert_eq!(&day[7..8], "-");

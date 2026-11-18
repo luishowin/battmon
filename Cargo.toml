@@ -6,8 +6,19 @@ rust-version = "1.92"
 description = "Battery monitor for GNOME: level history, health, cycles and charge rate"
 license = "MIT"
 
+[features]
+default = ["gui"]
+gui = ["dep:gtk", "dep:adw"]
+
+[[bin]]
+name = "battmon"
+path = "src/main.rs"
+required-features = ["gui"]
+
 [dependencies]
+adw = { version = "0.9.2", package = "libadwaita", features = ["v1_10"], optional = true }
 anyhow = "1.0.104"
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_24"], optional = true }
 jiff = "1.0.1"
 rusqlite = "0.43.0"
 signal-hook = "0.4.6"
