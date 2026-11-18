@@ -1,0 +1,19 @@
+[Unit]
+Description=Battmon battery sampler
+PartOf=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/battmond
+Restart=on-failure
+RestartSec=30
+Nice=19
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/battmon
+
+[Install]
+WantedBy=default.target

@@ -4,4 +4,5 @@
 //! and can be built with `--no-default-features`.
 
 pub mod model;
+pub mod store;
 pub mod sysfs;
