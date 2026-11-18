@@ -362,8 +362,14 @@ impl State {
                     _ => String::new(),
                 };
                 widgets.power.set(&format!("{power:.1} W"), &subtitle);
+                widgets
+                    .power
+                    .set_success(plugged_in(reading.status, reading.ac_online));
             }
-            None => widgets.power.set("n/a", ""),
+            None => {
+                widgets.power.set("n/a", "");
+                widgets.power.set_success(false);
+            }
         }
 
         if let Some(extra) = &widgets.extra {
@@ -539,6 +545,17 @@ fn hero_text(reading: &Reading, estimate: &LiveEstimate) -> String {
     }
 }
 
+/// True when the machine is on wall power (charging, full, or held at a charge
+/// limit). `Unknown` falls back to the Mains supply's `online` file; a
+/// `Discharging` status overrides a stale `AC/online`.
+fn plugged_in(status: Status, ac_online: Option<bool>) -> bool {
+    if status == Status::Discharging {
+        false
+    } else {
+        status.is_on_ac() || (status == Status::Unknown && ac_online == Some(true))
+    }
+}
+
 /// Keep the banner readable rather than dumping a whole error chain.
 fn short_reason(message: &str) -> String {
     message.lines().next().unwrap_or(message).to_owned()
@@ -631,6 +648,26 @@ mod tests {
             hero_text(&reading(Status::Charging), &estimate),
             "Charging · almost full"
         );
+    }
+
+    #[test]
+    fn green_power_means_on_wall_power() {
+        for status in [Status::Charging, Status::Full, Status::NotCharging] {
+            assert!(plugged_in(status, Some(true)), "{status} should be green");
+        }
+        assert!(!plugged_in(Status::Discharging, Some(false)));
+    }
+
+    #[test]
+    fn stale_ac_does_not_green_a_discharging_battery() {
+        assert!(!plugged_in(Status::Discharging, Some(true)));
+    }
+
+    #[test]
+    fn unknown_status_falls_back_to_ac_for_green() {
+        assert!(plugged_in(Status::Unknown, Some(true)));
+        assert!(!plugged_in(Status::Unknown, Some(false)));
+        assert!(!plugged_in(Status::Unknown, None));
     }
 
     #[test]

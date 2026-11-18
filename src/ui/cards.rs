@@ -51,4 +51,15 @@ impl StatCard {
         self.subtitle.set_text(subtitle);
         self.subtitle.set_visible(!subtitle.is_empty());
     }
+
+    /// Tint the card's numbers with the theme's success colour.
+    pub fn set_success(&self, success: bool) {
+        for label in [&self.value, &self.subtitle] {
+            if success {
+                label.add_css_class("success");
+            } else {
+                label.remove_css_class("success");
+            }
+        }
+    }
 }

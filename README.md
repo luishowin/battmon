@@ -51,6 +51,19 @@ rm -f ~/.local/bin/{battmon,battmond} \
 rm -rf ~/.local/share/battmon     # this deletes the history
 ```
 
+### Fedora package
+
+To build and install the RPM instead:
+
+```sh
+packaging/rpm/make-vendor-tarball.sh
+rpmbuild -ba packaging/rpm/battmon.spec
+sudo dnf install ~/rpmbuild/RPMS/x86_64/battmon-*.rpm
+systemctl --user enable --now battmond
+```
+
+See `packaging/rpm/README.md` for details.
+
 ## Use
 
 - **App**: open "Battery" from the Activities overview, or run `battmon`.
